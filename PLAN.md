@@ -3,7 +3,7 @@
 Based on the supplied October 31, 2026 specification and checked-in interfaces.
 Work through one step per review. Do not change shared packages or interfaces.
 
-## 1. Correct synchronous fetch (current step)
+## 1. Correct synchronous fetch
 - Use RESET_PC, request PC and PC+4, and advance by eight without rounding down.
 - Track request PC with the synchronous ROM response.
 - Hold response during stalls; redirect takes priority and invalidates old work.
@@ -11,13 +11,22 @@ Work through one step per review. Do not change shared packages or interfaces.
 - Add directed tests for reset, sequential reads, stalls, redirects to PC=4, errors.
 - Status: implemented; testbench written, simulation pending simulator availability.
 
-## 2. Implement instruction decode
+## 2. Implement instruction decode (current step)
 - Build a combinational decoder returning decoded_uop_t, then instantiate two lanes.
 - Decode RV32I ALU, immediate, shifts, loads/stores, branches, jumps, LUI/AUIPC,
   and Zicsr with exact encoding checks and correct immediate extension.
 - Preserve fetch metadata; flag illegal encodings and suppress unintended writes.
 - Test instruction categories, negative immediates, x0, and illegal encodings.
 - Coordinate system instruction/exception semantics absent from current types.
+- Status: single-lane decoder and two-lane wrapper implemented in
+  common/instr_decode.sv; directed tests in tb/frontend_decode_tb.sv.
+- Encoding checks and whitespace checks passed; RTL simulation remains pending.
+- ECALL, EBREAK, FENCE/FENCE.I and privileged operations are currently flagged
+  unsupported. Their execution/exception semantics require instructor/backend
+  coordination before this step can claim full system-instruction support.
+- Backend agreement needed: jumps use ALU PC+4 for the link result and separate
+  PC/rs1 plus immediate for the target. CSR commands preserve rd and rs1/zimm
+  fields so the backend can apply Zicsr read/write suppression rules.
 
 ## 3. Add ordered buffering
 - Define frontend-local metadata; retain unaccepted instructions in order.
@@ -78,4 +87,6 @@ checks are not passing tests until simulated. Example Questa/ModelSim commands:
 vlib work
 vlog -sv common/rv32_ooo_pkg.sv common/instruction_memory_pkg.sv common/instruction_memory_if.sv common/instr_fetch.sv tb/frontend_fetch_tb.sv
 vsim -c frontend_fetch_tb -do "run -all; quit -f"
+vlog -sv common/rv32_ooo_pkg.sv common/instr_decode.sv tb/frontend_decode_tb.sv
+vsim -c frontend_decode_tb -do "run -all; quit -f"
 ```
