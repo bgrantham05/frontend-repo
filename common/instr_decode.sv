@@ -174,7 +174,7 @@ module frontend_decode (
         // illegal instructions
         decoded_o.illegal = !legal;
         decoded_o.writes_rd = decoded_o.writes_rd && (decoded_o.rd != 0);
-=        if (!legal || fetch_error_i) begin
+        if (!legal || fetch_error_i) begin
             decoded_o.uop_class = UOP_INVALID;
             decoded_o.uses_rs1 = 1'b0;
             decoded_o.uses_rs2 = 1'b0;
