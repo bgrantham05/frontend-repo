@@ -13,13 +13,13 @@ must be coordinated with the backend/instructors before implementation.
 ```text
 request PC registers -> synchronous instruction ROM -> held response + PC
                                                      |
-                 predictor/BTB (planned) -> prediction + lane validity
+                 predictor/BTB (standalone) -> prediction + lane validity (wiring planned)
                                                      |
                                        four-slot ready buffer
                                                      |
                                     two combinational decoders
                                                      |
-                                  rename + dispatch admission (planned)
+                                  rename (standalone) + dispatch admission
                                        /                      \
                               ROB allocation              backend dispatch
                                    ^                           |
@@ -32,9 +32,8 @@ backend misprediction     -> invalidate younger ROB work + restore rename state
                           -> flush ready buffer + redirect fetch
 ```
 
-Prediction, rename, ROB, recovery, and a connected frontend top level are not yet
-implemented. br_pred.sv, reg_rename.sv, and reorder_buff_retire.sv are placeholders.
-The ready buffer and decoder are standalone modules at this stage.
+The predictor and BTB, ready buffer, decoder, and renamer are standalone modules
+at this stage. ROB, recovery, and a connected frontend top level are pending.
 
 ### Fetch state and the ROM boundary 
 
@@ -99,21 +98,21 @@ exception contract, not full implementation of all required system instructions.
 
 ### Tournament predictor and BTB 
 
-The CDR specifies tournament prediction, consistent with Group 1's assignment;
-confirm team assignment before implementation. Planned structures are a
-PC-indexed local-history table, local two-bit counter table indexed by that history,
-global history register, gshare two-bit counter table indexed by PC XOR global
-history, chooser two-bit counters, and a tagged valid/target BTB. Table sizes and
-history widths remain to be chosen explicitly in step 4; none are RTL parameters yet.
+The standalone tournament predictor provides two PC lookups and one resolution
+update per cycle. The parameterized defaults are 64 local histories of four bits,
+16 local counters, six bits of global history, 64 gshare counters, 64 chooser
+counters, and a 16-entry direct-mapped tagged BTB. Direction counters reset to
+weakly not taken and the chooser resets to weakly favor local.
 The XOR belongs in gshare indexing. The local component uses PC to select history,
 then that history to select a direction counter.
 
 The chooser selects a component's direction. A taken direction needs a usable
 target; a BTB miss falls back to sequential fetch until a target is available.
 Retain prediction-time local/global indexes, component predictions, selected
-direction/target, and branch identity for later training. Train counters on actual
-outcome, train the chooser when components disagree, and count resolved predictions
-and correct predictions for accuracy. Direct/indirect jump handling must be defined.
+direction/target, and branch identity for later training. The module trains both
+direction counters on the actual outcome and trains the chooser when components
+disagree. Carrying metadata to resolution, measuring accuracy, and defining
+direct/indirect jump handling remain integration tasks.
 Begin with resolution-updated history to avoid speculative history rollback;
 speculative history, if later added, needs its own checkpoint/recovery design.
 
@@ -123,11 +122,13 @@ and how to obtain training direction/target before connecting predictor updates.
 
 ### Rename and dispatch state 
 
-Use 32 six-bit speculative RAT entries initialized RAT[x]=x; x0 always maps to p0.
-Use a 32-entry circular free-register FIFO initialized with p32 through p63, read
+The standalone renamer uses 32 six-bit speculative RAT entries initialized
+RAT[x]=x; x0 always maps to p0.
+It uses a 32-entry circular free-register FIFO initialized with p32 through p63, read
 and write pointers, and occupancy. Retiring one destination returns its old mapping;
 the allocated destination remains live. Instructions without a nonzero destination
-consume neither a free register nor a RAT update.
+consume neither a free register nor a RAT update. A returned register becomes
+available for allocation on the following cycle.
 
 Compute lane 0 source mappings from the current RAT before changing its destination.
 Compute lane 1 against the tentative RAT after lane 0, so same-cycle RAW forwards
@@ -135,8 +136,9 @@ lane 0's new mapping and WAW saves that mapping as lane 1's old destination.
 Build renamed_uop_t with decoded controls, physical sources/destination, full ROB
 tag, and under_unresolved_branch; keep old_pdst in frontend ROB metadata.
 
-Offer only a prefix for which physical registers, ROB entries, and the one-unresolved-
-branch rule permit admission. Commit RAT/free-list/ROB changes ONLY for backend
+Offer only a prefix for which physical registers, ROB entries, and branch checkpoint
+slots are available. A full checkpoint table stalls the next branch and any younger
+lane. Commit RAT/free-list/ROB/checkpoint changes ONLY for backend
 dispatch_accept_count on that edge. Unaccepted candidates can be recomputed from
 the held raw queue entries; they must not consume resources. Actual resource
 reservation and backend stalled-offer stability rules need verification in step 5.
@@ -163,12 +165,18 @@ Two generation bits do not solve arbitrarily delayed stale completions: coordina
 the maximum response lifetime/tag reuse contract with the backend.
 
 ### Recovery organization and the CDR dirty/clean proposal
-Use one unresolved control-flow checkpoint under the current shared bundle contract.
-Take a full speculative RAT snapshot at the branch boundary, after the branch's
+Support four simultaneously unresolved control-flow branches. For each accepted
+branch, save its full ROB tag and a speculative RAT snapshot after the branch's
 own destination mapping (e.g. JAL link) and before any younger lane's mapping.
-Track its branch ROB tag. On correct resolution release the checkpoint and clear
-the younger-work tracking state on both sides under the agreed backend protocol.
-Do not admit a second unresolved branch until the first checkpoint is released.
+Two accepted branches in one bundle need separate snapshots in lane order.
+On correct resolution release only the checkpoint matching the resolved tag.
+On misprediction restore that checkpoint, release it and all younger checkpoints,
+and preserve older unresolved checkpoints. Use ROB age to identify younger work.
+
+The current shared `under_unresolved_branch` field assumes one unresolved branch.
+Before integrating, agree with the backend on how it identifies work younger than
+a particular branch, such as by ROB age or an explicit branch mask with a defined
+slot reuse protocol. Keep shared interfaces unchanged until that agreement.
 
 On a misprediction, keep the branch and older ROB entries, invalidate only younger
 entries, restore the boundary RAT, flush queued/fetched younger work, and redirect
@@ -193,10 +201,9 @@ tag checking alone cannot protect backend physical-register writes after reuse.
 
 ### Progress, verification, and integration dependencies
 
-Fetch, dual decode, elastic_buffer, and the ordered ready buffer have RTL. Fetch,
-decode, and ready-buffer testbenches exist; simulation remains pending. Rename,
-predictor, ROB, recovery, and top-level wiring remain planned. The CDR statement
-that testbenches have not been started is therefore out of date.
+Fetch, dual decode, elastic_buffer, the ordered ready buffer, and the standalone
+predictor and renamer have RTL. Fetch, decode, ready-buffer, predictor, and rename
+testbenches exist. ROB, recovery, and top-level wiring remain planned.
 
 Next verification layers are buffer/fetch integration with a synchronous ROM model,
 rename dependency/resource tests, ROB completion/age/tag tests, predictor training,
@@ -206,7 +213,7 @@ stalls, redirects, and repeated recovery. Resource stress must exhaust the 32 fr
 destinations, rather than allocate p0 or assume all 64 registers start free.
 
 Before system integration, coordinate branch resolution PC/direction/target,
-unsupported system instruction and fault handling, one-unresolved-branch lifetime,
+unsupported system instruction and fault handling, four-branch squash and resolution semantics,
 stale result cancellation, and stalled dispatch-offer requirements. Shared packages
 and interfaces remain unchanged by this step.
 
@@ -261,16 +268,19 @@ and interfaces remain unchanged by this step.
   reset while occupied, and 300 randomized cycles against an instruction FIFO model.
 
 ## 4. Implement tournament prediction and BTB
-- Confirm Group 1 assignment before implementing its assigned predictor.
-- Choose local history/counter, gshare, chooser, and BTB sizes explicitly.
+- Standalone RTL and a directed testbench are in common/br_pred.sv and
+  tb/frontend_branch_predictor_tb.sv.
 - Gshare XORs PC bits with global history; local prediction uses PC-indexed history.
 - Retain prediction-time indexes and predictions for training and accuracy counters.
 - A taken lane-0 prediction suppresses younger lane 1.
-- Follow the current one-unresolved-branch contract unless a change is coordinated.
+- Support four unresolved branch checkpoints and coordinate backend squash semantics.
 - Clarify how actual direction/target comes from existing backend resolution fields.
 - Test saturation, chooser training, BTB misses/conflicts, and wrong targets.
 
 ## 5. Implement register renaming
+- Standalone RTL and testbench are in common/reg_rename.sv and
+  tb/frontend_reg_rename_tb.sv. The caller supplies the ROB tail tag, admission
+  prefix, accepted prefix, and the retirement-time register to reclaim.
 - Initialize RAT[x]=x, reserve p0, and initially free p32 through p63.
 - Read sources before destination updates; bypass same-bundle RAW/WAW dependencies.
 - Allocate only accepted instructions writing nonzero rd; save old mapping for ROB.
@@ -294,6 +304,8 @@ and interfaces remain unchanged by this step.
 - Stop dispatch on every branch-resolution event as the interface requires.
 - On misprediction, invalidate younger work and redirect; reject stale completions.
 - Test older incomplete work, younger writes, stalls, and repeated recovery.
+- Test four live checkpoints, admission with a full table, two branch checkpoints
+  in one bundle, and correct or mispredicted resolution of a non-oldest branch.
 - Coordinate exceptions: current completion structures have no explicit fault fields.
 
 ## 8. Integrate and validate
@@ -305,8 +317,7 @@ and interfaces remain unchanged by this step.
 - Run simulation/lint and FPGA synthesis checks; document remaining limitations.
 
 ## Verification
-No SystemVerilog simulator was found on PATH during initial inspection. Written
-checks are not passing tests until simulated. Example Questa/ModelSim commands:
+Example Questa/ModelSim commands:
 
 ```text
 vlib work
@@ -316,4 +327,8 @@ vlog -sv common/rv32_ooo_pkg.sv common/instr_decode.sv tb/frontend_decode_tb.sv
 vsim -c frontend_decode_tb -do "run -all; quit -f"
 vlog -sv common/rv32_ooo_pkg.sv common/frontend_local_pkg.sv common/frontend_ready_buffer.sv tb/frontend_ready_buffer_tb.sv
 vsim -c frontend_ready_buffer_tb -do "run -all; quit -f"
+vlog -sv common/br_pred.sv tb/frontend_branch_predictor_tb.sv
+vsim -c frontend_branch_predictor_tb -do "run -all; quit -f"
+vlog -sv common/rv32_ooo_pkg.sv common/reg_rename.sv tb/frontend_reg_rename_tb.sv
+vsim -c frontend_reg_rename_tb -do "run -all; quit -f"
 ```
