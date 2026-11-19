@@ -1,26 +1,25 @@
-// Fixed one-cycle synchronous instruction-ROM contract.
-// On an enabled ROM clock edge, sample address and update both words/errors.
-// Disabled edges HOLD the previous output. ROM and frontend use the same clock.
+// read two instruction words on the ROM clock edge
+// sample the address when read_enable is high
+// hold the last result when read_enable is low
 
 
 interface instruction_memory_if;
 
-    // Import Packages
     import instruction_memory_pkg::*;
 
-    // From Fetch - word-aligned byte address, not necessarily eight-byte aligned
+    // fetch sends a byte address aligned to four bytes
     imem_address_t address;
-    logic read_enable;
+    logic read_enable; // take a new address on the clock edge
 
-    // From ROM - low word is at address, high word is at address+4
+    // the low word is at address, the high word is at address + 4
     imem_data_t data;
 
-    // error[n] marks an invalid, misaligned, or out-of-range word in lane n
-    imem_error_t error;
+    // one error bit per word for a bad address or invalid word
+    imem_error_t error; // which returned words had a problem
 
 
-    // ----- Frontend Side -----
-    // No ready/valid handshake or epoch: read_enable controls the synchronous read.
+    // frontend side
+    // read_enable controls when the ROM takes a new address
     modport frontend (
         output address,
                read_enable,
@@ -30,7 +29,7 @@ interface instruction_memory_if;
     );
 
 
-    // ----- Instruction ROM Side -----
+    // ROM side
     modport memory (
         input address,
               read_enable,

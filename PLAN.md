@@ -1,5 +1,8 @@
 # Frontend implementation plan
 
+Use this file to follow the instruction path, check implementation status, and
+find the standalone simulation commands.
+
 Based on the supplied October 31, 2026 specification and checked-in interfaces.
 Work through one step per review. Do not change shared packages or interfaces.
 
@@ -146,6 +149,19 @@ On every branch_resolve_valid event dispatch acceptance must be zero, including
 correct predictions. Resource availability controls dispatch admission; it propagates
 to the queue and then fetch when local holding capacity fills.
 
+Use `frontend_memory_dispatch` at the dispatch boundary. Feed it the renamed
+offer, branch-resolution indication, and the prefix the backend can accept
+before accounting for memory capacity. Use its final accepted count for the
+backend enqueue, frontend dequeue, rename commit, and ROB allocation.
+Connect its memory port to the same `backend_memory_if` instance used by
+the LSU. The LSU reserves an entry on `disp_valid && disp_ready` using
+`disp_inst.decoded.mem_cmd` and `disp_inst.rob_tag`. Assert `disp_ready`
+when the queue selected by the current offer has space. A stalled offer may
+be recomputed or withdrawn. The scalar port admits at most one load or store
+per cycle, so a younger second memory operation stays in the frontend queue.
+On mispredict recovery, the LSU needs the branch tag to discard younger
+reservations.
+
 ### ROB storage, completion, and retirement
 
 Use 16 entries storing valid, complete, full tag, decoded metadata, new/old physical
@@ -223,7 +239,7 @@ and interfaces remain unchanged by this step.
 - Hold response during stalls; redirect takes priority and invalidates old work.
 - Preserve errors as valid instruction slots for later fault handling.
 - Add directed tests for reset, sequential reads, stalls, redirects to PC=4, errors.
-- Status: implemented; testbench written, simulation pending simulator availability.
+- Status: implemented; standalone ROM timing and redirect tests pass in Verilator.
 
 ## 2. Implement instruction decode
 - Build a combinational decoder returning decoded_uop_t, then instantiate two lanes.
@@ -234,7 +250,7 @@ and interfaces remain unchanged by this step.
 - Coordinate system instruction/exception semantics absent from current types.
 - Status: single-lane decoder and two-lane wrapper implemented in
   common/instr_decode.sv; directed tests in tb/frontend_decode_tb.sv.
-- Encoding checks and whitespace checks passed; RTL simulation remains pending.
+- The directed decoder tests pass in Verilator.
 - ECALL, EBREAK, FENCE/FENCE.I and privileged operations are currently flagged
   unsupported. Their execution/exception semantics require instructor/backend
   coordination before this step can claim full system-instruction support.
@@ -249,8 +265,8 @@ and interfaces remain unchanged by this step.
 - Test partial acceptance, full stalls, simultaneous replacement, and flushes.
 - Fetch currently uses whole-bundle ready/valid; this stage adapts to partial dispatch.
 - Status: implemented standalone in common/frontend_ready_buffer.sv with private
-  fetch_slot_t in common/frontend_local_pkg.sv. Directed and randomized scoreboard
-  tests are in tb/frontend_ready_buffer_tb.sv; RTL simulation pending.
+  fetch_slot_t in common/frontend_local_pkg.sv. The directed and randomized
+  scoreboard tests pass in Verilator.
 - Integration with fetch, decode, and eventual rename/dispatch remains step 8.
 - Organization: four compacted instruction slots and a three-bit occupancy count.
   Each slot holds PC, instruction, predicted next PC, and per-instruction ROM error.
@@ -317,6 +333,10 @@ and interfaces remain unchanged by this step.
 - Run simulation/lint and FPGA synthesis checks; document remaining limitations.
 
 ## Verification
+
+All five standalone frontend testbenches pass in Verilator with protocol assertions
+enabled. Integrated frontend simulation and FPGA timing checks are pending.
+
 Example Questa/ModelSim commands:
 
 ```text

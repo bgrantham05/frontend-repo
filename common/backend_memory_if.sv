@@ -2,23 +2,32 @@
 
 interface backend_memory_if;
 
-    // Import Packages
     import rv32_ooo_pkg::*;
 
-    // Issue and Completion Handshakes, Plus LSU Busy Status
-    // An issue or result transfers when its valid and ready are both high.
+    // Reserve one LQ/SQ entry on the edge where both signals are high.
+    // disp_inst carries the full ROB tag used to match the later issue.
+    logic disp_valid, disp_ready;
+    renamed_uop_t disp_inst;
+
+    modport dispatch(
+        output disp_valid, disp_inst,
+        input disp_ready
+    );
+
+    // send memory operations and get completions back
+    // transfer on the clock edge when both valid and ready are high
     logic issue_valid, issue_ready, busy, result_valid, result_ready;
 
-    // From the Backend - instruction metadata and captured register values
-    renamed_uop_t issue_uop;
+    // the backend sends the instruction, its operands, and the ROB head tag
+    renamed_uop_t issue_uop; // load or store to send
     logic [XLEN-1:0] source_1, source_2;
     rob_tag_t rob_head_tag;
 
-    // From the LSU - completion tag and optional load writeback
-    execution_result_t result;
+    // the LSU sends the completion tag and load data if there is a writeback
+    execution_result_t result; // finished memory operation
 
 
-    // ----- Backend Side -----
+    // backend side
     modport backend(
         output issue_valid,
                issue_uop,
@@ -34,16 +43,19 @@ interface backend_memory_if;
     );
 
 
-    // ----- Memory / LSU Side -----
+    // load/store unit side
     modport memory(
-        input issue_valid,
+        input disp_valid,
+              disp_inst,
+              issue_valid,
               issue_uop,
               source_1,
               source_2,
               rob_head_tag,
               result_ready,
 
-        output issue_ready,
+        output disp_ready,
+               issue_ready,
                busy,
                result_valid,
                result

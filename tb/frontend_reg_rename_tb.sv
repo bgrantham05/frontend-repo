@@ -1,4 +1,5 @@
 `timescale 1ns/1ps
+// test register allocation, lane dependencies, and register reuse
 module frontend_reg_rename_tb;
     import rv32_ooo_pkg::*;
     logic clk = 0;
@@ -22,6 +23,7 @@ module frontend_reg_rename_tb;
         .reclaim_valid_i(reclaim), .reclaim_pdst_i(returned_pdst), .free_count_o(free_count)
     );
 
+    // make a decoded instruction with two sources and a destination
     function automatic decoded_uop_t writing(input arch_reg_t rd, rs1, rs2);
         decoded_uop_t uop = '0;
         uop.rd = rd;
@@ -33,6 +35,7 @@ module frontend_reg_rename_tb;
         return uop;
     endfunction
 
+    // accept lanes for one cycle and return an old register if needed
     task automatic advance(input lane_count_t count, input bit give_back = 0,
                            input phys_reg_t returned = 0);
         accept = count;
@@ -58,7 +61,7 @@ module frontend_reg_rename_tb;
             bundle.lane1.pdst !== 33 || old1 !== 32 ||
             flatten_rob_tag(bundle.lane1.rob_tag) !== 16)
             $fatal(1, "Reset mapping, lane forwarding, or tag rollover is incorrect");
-        advance(0);
+        advance(0); // stall without using any registers
         if (free_count !== 32 || bundle.lane0.pdst !== 32)
             $fatal(1, "A stalled offer must not allocate");
 
@@ -72,10 +75,11 @@ module frontend_reg_rename_tb;
         lane1 = writing(5, 5, 0);
         decoded_count = 2;
         #1;
-        advance(2, 1, 5);
+        advance(2, 1, 5); // accept both lanes and return p5
         if (free_count !== 30 || bundle.lane0.psrc1 !== 34)
             $fatal(1, "Dual WAW and concurrent reclamation are incorrect");
 
+        // use up the original free registers, then check for the returned one
         decoded_count = 1;
         for (int i = 35; i < 64; i++) begin
             #1;
@@ -94,11 +98,11 @@ module frontend_reg_rename_tb;
         #1;
         if (offered !== 1 || bundle.lane0.has_destination || bundle.lane0.psrc1 !== 0)
             $fatal(1, "x0 must dispatch without consuming a physical register");
-        advance(1, 1, 32);
+        advance(1, 1, 32); // accept one lane and return p32
         if (free_count !== 1 || offered !== 2 || bundle.lane1.pdst !== 32)
             $fatal(1, "Reclamation must unblock the next destination instruction");
 
-        admission = 0;
+        admission = 0; // block new offers from outside rename
         #1;
         if (offered !== 0)
             $fatal(1, "External admission limit must suppress dispatch");

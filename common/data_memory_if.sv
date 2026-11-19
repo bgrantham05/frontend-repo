@@ -1,24 +1,24 @@
-// One outstanding word transaction. Addresses are BYTE addresses, aligned to four bytes.
-// Write data and byte enables use little-endian byte lanes.
-// Every accepted request receives one response, including stores.
+// handle one word request at a time, using byte addresses aligned to four bytes
+// store data and byte enables use little-endian lane order
+// send one response for every accepted load or store
 
 
 interface data_memory_if;
 
-    // Request Handshake and Operation - write=1 means store, write=0 means load
+    // write is 1 for a store and 0 for a load
     logic request_valid, request_ready, write;
 
-    // Request Payload - one byte-enable bit per store byte; ignored for reads
+    // use one enable bit for each store byte
     logic [31:0] address, write_data;
-    logic [3:0] byte_enable;
+    logic [3:0] byte_enable; // which bytes to write
 
-    // Response Handshake and Payload
+    // return the data and error status
     logic response_valid, response_ready, error;
-    logic [31:0] read_data;
+    logic [31:0] read_data; // value returned for a load
 
 
-    // ----- Client Side - LSU, Accelerator, or Arbiter -----
-    // Notice: hold valid and the request payload until request_ready accepts them.
+    // client side: LSU, accelerator, or arbiter
+    // hold the request until valid and ready are both high at the clock edge
     modport client(
         output request_valid,
                write,
@@ -34,8 +34,8 @@ interface data_memory_if;
     );
 
 
-    // ----- Server Side - Arbiter or RAM Controller -----
-    // The response also holds until valid && ready at a rising edge.
+    // server side: arbiter or RAM controller
+    // hold the response until valid and ready are both high at the clock edge
     modport server(
         input request_valid,
               write,

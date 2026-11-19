@@ -1,4 +1,5 @@
 `timescale 1ns/1ps
+// compare the buffer with a reference queue using fixed and random tests
 module frontend_ready_buffer_tb;
     import rv32_ooo_pkg::*;
     import frontend_local_pkg::*;
@@ -7,8 +8,8 @@ module frontend_ready_buffer_tb;
     logic rst_n = 0, flush = 0, ready;
     lane_count_t input_count = 0, output_count, accept_count = 0;
     fetch_slot_t in0, in1, out0, out1;
+    // keep the instructions the next stage hasn't accepted yet
     fetch_slot_t expected[$];
-    fetch_slot_t discarded;
     int serial = 0;
     frontend_ready_buffer dut (
         .clk_i(clk), .rst_ni(rst_n), .flush_i(flush),
@@ -18,6 +19,7 @@ module frontend_ready_buffer_tb;
         .output_accept_count_i(accept_count)
     );
 
+    // give each instruction a unique value so we can spot loss or reordering
     function automatic fetch_slot_t packet(input int n);
         fetch_slot_t p;
         p.pc = 32'(n * 4);
@@ -36,8 +38,9 @@ module frontend_ready_buffer_tb;
         if ((!rst_n || flush) && ready) $fatal(1, "Ready during reset/flush");
     endtask
 
+    // set inputs before the edge, update the reference queue at the edge
     task automatic cycle(input int offered, input int accepted, input bit do_flush);
-        bit should_ready;
+        bit should_ready, input_transfers;
         @(negedge clk);
         flush = do_flush;
         input_count = lane_count_t'(offered);
@@ -46,6 +49,8 @@ module frontend_ready_buffer_tb;
         in1 = packet(serial + 1);
         #1;
         check_output();
+        // save ready before the clock edge changes the queue
+        input_transfers = ready; // save whether the input will be accepted
         if (!do_flush) begin
             if (accepted > int'(output_count)) $fatal(1, "Invalid test acceptance");
             should_ready = (expected.size() - accepted <= 2);
@@ -54,11 +59,11 @@ module frontend_ready_buffer_tb;
         @(posedge clk);
         if (do_flush) expected.delete();
         else begin
-            repeat (accepted) discarded = expected.pop_front();
-            if (ready) begin
+            repeat (accepted) expected.delete(0); // remove the oldest accepted entries
+            if (input_transfers) begin
                 if (offered >= 1) expected.push_back(in0);
                 if (offered == 2) expected.push_back(in1);
-                serial += offered;
+                serial += offered; // start the next input at a fresh number
             end
         end
         #1;

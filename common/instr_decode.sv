@@ -1,3 +1,4 @@
+// turn one instruction into controls and keep its fetch info
 module frontend_decode (
     input logic [31:0] instruction_i,
     input logic [31:0] pc_i,
@@ -9,14 +10,14 @@ module frontend_decode (
     logic [6:0] opcode, funct7;
     logic [2:0] funct3;
     logic legal;
-    //these are the operation selectors
+    // use the opcode to find the group, then funct3 and funct7 for the operation
     assign opcode = instruction_i[6:0];
     assign funct3 = instruction_i[14:12];
     assign funct7 = instruction_i[31:25];
 
-    // decode instruction, does NOT retain state
+    // start with defaults, then fill in what this instruction needs
     always_comb begin
-        decoded_o = '0;
+        decoded_o = '0; // clear fields before filling them in
         decoded_o.pc = pc_i;
         decoded_o.instruction = instruction_i;
         decoded_o.predicted_next_pc = predicted_next_pc_i;
@@ -32,11 +33,10 @@ module frontend_decode (
         decoded_o.mem_cmd = MEM_NONE;
         decoded_o.mem_size = MEM_BYTE;
         decoded_o.csr_cmd = CSR_NONE;
-        legal = 1'b1;
+        legal = 1'b1; // assume valid until a check fails
 
-        // figure out the instrction, set control signals
-        case (opcode)
-            // Register and immediate ALU operations
+        case (opcode) // choose the instruction family
+            // ALU operations with a register or an immediate
             7'b0110011, 7'b0010011: begin
                 decoded_o.uop_class = UOP_ALU;
                 decoded_o.uses_rs1 = 1'b1;
@@ -44,10 +44,6 @@ module frontend_decode (
                 decoded_o.writes_rd = 1'b1;
                 decoded_o.operand_a_sel = OPA_RS1;
                 decoded_o.operand_b_sel = decoded_o.uses_rs2 ? OPB_RS2 : OPB_IMM;
-                // sign extension
-                if (!decoded_o.uses_rs2)
-                    decoded_o.immediate = {{20{instruction_i[31]}}, instruction_i[31:20]};
-                // ALU op selection
                 case (funct3)
                     3'b000: begin
                         if (decoded_o.uses_rs2 && funct7 == 7'b0100000)
@@ -73,10 +69,15 @@ module frontend_decode (
                 endcase
                 if (decoded_o.uses_rs2 && funct3 != 0 && funct3 != 3'b101 && funct7 != 0)
                     legal = 1'b0;
-                if (!decoded_o.uses_rs2 && (funct3 == 3'b001 || funct3 == 3'b101))
-                    decoded_o.immediate = {27'b0, instruction_i[24:20]};
+                // use five bits for a shift amount and sign extend other immediates
+                if (!decoded_o.uses_rs2) begin
+                    if (funct3 == 3'b001 || funct3 == 3'b101)
+                        decoded_o.immediate = {27'b0, instruction_i[24:20]};
+                    else
+                        decoded_o.immediate = {{20{instruction_i[31]}}, instruction_i[31:20]};
+                end
             end
-            // load, store
+            // add the offset to rs1 for the memory address
             7'b0000011, 7'b0100011: begin
                 decoded_o.uses_rs1 = 1'b1;
                 decoded_o.operand_a_sel = OPA_RS1;
@@ -86,8 +87,8 @@ module frontend_decode (
                     decoded_o.mem_cmd = MEM_LOAD;
                     decoded_o.writes_rd = 1'b1;
                     decoded_o.immediate = {{20{instruction_i[31]}}, instruction_i[31:20]};
-                    decoded_o.load_unsigned = funct3[2];
-                    // width, extension and alignment checks
+                    decoded_o.load_unsigned = funct3[2]; // choose how to fill the upper bits
+                    // pick the load size and whether to sign extend, the LSU checks alignment
                     case (funct3)
                         3'b000, 3'b100: decoded_o.mem_size = MEM_BYTE;
                         3'b001, 3'b101: decoded_o.mem_size = MEM_HALF;
@@ -95,7 +96,7 @@ module frontend_decode (
                         default: legal = 1'b0;
                     endcase
                 end else begin
-                    // source, addr offset
+                    // take the data from rs2 and put the two offset fields together
                     decoded_o.uop_class = UOP_STORE;
                     decoded_o.mem_cmd = MEM_STORE;
                     decoded_o.uses_rs2 = 1'b1;
@@ -108,7 +109,7 @@ module frontend_decode (
                     endcase
                 end
             end
-            // branches: compare rs1 and rs2, add immediate to PC if taken
+            // compare rs1 and rs2, add the offset to the PC if taken
             7'b1100011: begin
                 decoded_o.uop_class = UOP_BRANCH;
                 decoded_o.uses_rs1 = 1'b1;
@@ -127,25 +128,26 @@ module frontend_decode (
                     default: legal = 1'b0;
                 endcase
             end
-            //jump controls
+            // use PC + 4 for the link value
             7'b1101111, 7'b1100111: begin
                 decoded_o.uop_class = UOP_JUMP;
                 decoded_o.writes_rd = 1'b1;
                 decoded_o.operand_a_sel = OPA_PC;
-                decoded_o.operand_b_sel = OPB_FOUR;
-                // direct jump offset
+                decoded_o.operand_b_sel = OPB_FOUR; // add four to the PC for the return address
+                // get the jump offset from the instruction
                 if (opcode == 7'b1101111) begin
                     decoded_o.branch_op = BR_JAL;
                     decoded_o.immediate = {{11{instruction_i[31]}}, instruction_i[31],
                         instruction_i[19:12], instruction_i[20], instruction_i[30:21], 1'b0};
                 end else begin
-                    // indirect jump base and offset
-                    decoded_o.branch_op = BR_JALR;
+                    // use rs1 as the jump base
+                    decoded_o.branch_op = BR_JALR; // jump using an address in a register
                     decoded_o.uses_rs1 = 1'b1;
                     decoded_o.immediate = {{20{instruction_i[31]}}, instruction_i[31:20]};
                     if (funct3 != 0) legal = 1'b0;
                 end
             end
+            // LUI starts at zero, AUIPC starts at the PC
             7'b0110111, 7'b0010111: begin
                 decoded_o.uop_class = UOP_ALU;
                 decoded_o.writes_rd = 1'b1;
@@ -153,28 +155,28 @@ module frontend_decode (
                 decoded_o.operand_b_sel = OPB_IMM;
                 decoded_o.immediate = {instruction_i[31:12], 12'b0};
             end
-            // read/write set clear for CSR instructions
+            // get the CSR source from rs1 or the five-bit immediate
             7'b1110011: begin
                 decoded_o.uop_class = UOP_CSR;
                 decoded_o.writes_rd = 1'b1;
                 decoded_o.csr_address = instruction_i[31:20];
-                decoded_o.csr_uses_immediate = funct3[2];
+                decoded_o.csr_uses_immediate = funct3[2]; // choose a small constant or a register
                 decoded_o.csr_immediate = instruction_i[19:15];
                 decoded_o.uses_rs1 = !funct3[2];
                 case (funct3)
                     3'b001, 3'b101: decoded_o.csr_cmd = CSR_RW;
                     3'b010, 3'b110: decoded_o.csr_cmd = CSR_RS;
                     3'b011, 3'b111: decoded_o.csr_cmd = CSR_RC;
-                    default: legal = 1'b0; 
+                    default: legal = 1'b0;
                 endcase
             end
             default: legal = 1'b0;
         endcase
 
-        // illegal instructions
-        decoded_o.illegal = !legal;
+        // keep the error flags and turn off writes and other side effects
+        decoded_o.illegal = !legal; // flag an unsupported encoding
         decoded_o.writes_rd = decoded_o.writes_rd && (decoded_o.rd != 0);
-        if (!legal || fetch_error_i) begin
+        if (!legal || fetch_error_i) begin // turn off effects but keep error flags
             decoded_o.uop_class = UOP_INVALID;
             decoded_o.uses_rs1 = 1'b0;
             decoded_o.uses_rs2 = 1'b0;
@@ -186,7 +188,7 @@ module frontend_decode (
     end
 endmodule
 
-//upstream buffering retains both instructions until accepted
+// decode both lanes at once, the buffer tracks which ones are valid
 module frontend_decode_pair (
     input logic [31:0] instruction0_i, instruction1_i,
     input logic [31:0] pc0_i, pc1_i,
@@ -194,13 +196,11 @@ module frontend_decode_pair (
     input logic fetch_error0_i, fetch_error1_i,
     output rv32_ooo_pkg::decoded_uop_t decoded0_o, decoded1_o
 );
-    //decode older instruction first so next PC prediction for younger instruction
     frontend_decode lane0 (
         .instruction_i(instruction0_i), .pc_i(pc0_i),
         .predicted_next_pc_i(predicted_next_pc0_i),
         .fetch_error_i(fetch_error0_i), .decoded_o(decoded0_o)
     );
-    // decode the younger instruction
     frontend_decode lane1 (
         .instruction_i(instruction1_i), .pc_i(pc1_i),
         .predicted_next_pc_i(predicted_next_pc1_i),

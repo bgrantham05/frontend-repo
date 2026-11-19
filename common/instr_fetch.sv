@@ -1,5 +1,3 @@
-// Whole-bundle ready/valid fetch for a synchronous two-word ROM.
-// Both valid lanes are consumed together on an edge with downstream_ready_i.
 module frontend_fetch (
     input logic clk_i,
     input logic rst_ni,
@@ -16,33 +14,35 @@ module frontend_fetch (
     output logic fetch_error0_o,
     output logic fetch_error1_o
 );
-    import rv32_ooo_pkg::*;
+    import rv32_ooo_pkg::*;                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             
+    // the request PC names next read, the response PC travels with ROM output.
     logic [31:0] request_pc_q, response_pc_q;
-    logic response_valid_q;
+    logic response_valid_q; // the ROM has a pair waiting
 
-    // A read replaces the ROM's held output, so reserve its response slot.
+    // A read replaces the ROM's held output, so reserve its response
     assign imem.address = request_pc_q;
-    assign imem.read_enable = rst_ni && !redirect_req_i &&
-                              (!response_valid_q || downstream_ready_i);
+    assign imem.read_enable = rst_ni && !redirect_req_i && (!response_valid_q || downstream_ready_i);
 
     always_ff @(posedge clk_i or negedge rst_ni) begin
         if (!rst_ni) begin
-            request_pc_q <= RESET_PC;
+            request_pc_q <= RESET_PC; // start at the reset address
             response_pc_q <= RESET_PC;
             response_valid_q <= 1'b0;
         end else if (redirect_req_i) begin
-            // Suppress the old request; read the exact target on the next edge.
-            request_pc_q <= redirect_pc_i;
+            // read target on next edge
+            request_pc_q <= redirect_pc_i; // fetch from the corrected address
             response_valid_q <= 1'b0;
         end else if (imem.read_enable) begin
-            response_pc_q <= request_pc_q;
+            //capture the pair, 8 bytes
+            response_pc_q <= request_pc_q; // save the address of this pair
             response_valid_q <= 1'b1;
-            request_pc_q <= request_pc_q + 32'd8;
+            request_pc_q <= request_pc_q + 32'd8; // skip past both instructions
         end
     end
 
+    // Mask the held pair immediately on redirect, then invalidate it at the clock edge
     assign fetch_valid0_o = rst_ni && !redirect_req_i && response_valid_q;
-    assign fetch_valid1_o = fetch_valid0_o;
+    assign fetch_valid1_o = fetch_valid0_o; // the two words come together
     assign fetch_pc0_o = response_pc_q;
     assign fetch_pc1_o = response_pc_q + 32'd4;
     assign fetch_inst0_o = imem.data[31:0];

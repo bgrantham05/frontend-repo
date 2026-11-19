@@ -1,37 +1,36 @@
-// Frontend <-> backend: dispatch, completion, branch recovery, and retirement.
-// Backend broadcasts one resolution event; both sides recover on the same edge.
+// connect frontend dispatch and retirement with backend completions
+// both sides get the same branch resolution event
 
 
 interface frontend_backend_if(
 
-    // System - also used by the interface assertions
+    // clock and reset for the interface checks
     input logic clk_i,
     input logic rst_ni
 );
 
-    // Import Packages
     import rv32_ooo_pkg::*;
 
-    // Ordered Dispatch - up to two instructions, accepted as a prefix
+    // accept 1 for the older instruction only, 2 for both
     lane_count_t dispatch_count, dispatch_accept_count;
-    renamed_bundle_t dispatch_bundle;
+    renamed_bundle_t dispatch_bundle; // instructions offered to the backend
 
-    // Two Completion Channels - ROB completion and optional PRF writeback
+    // two completion lanes, each can also carry a register writeback
     logic completion_valid_0, completion_valid_1;
     execution_result_t completion_0, completion_1;
 
-    // Branch Recovery - emitted once, independently of completion acceptance
-    logic branch_resolve_valid, branch_mispredict;
-    rob_tag_t branch_result_tag;
-    logic [XLEN-1:0] branch_result_pc;
+    // stop dispatch when a branch resolves, even if the prediction was right
+    logic branch_resolve_valid, branch_mispredict; // branch result arrived, prediction was wrong
+    rob_tag_t branch_result_tag; // which branch finished
+    logic [XLEN-1:0] branch_result_pc; // where execution should go
 
-    // From the ROB / Frontend - head-only issue and committed CSR updates
+    // ROB head tag for head-only issue, retirement tag for committed CSR updates
     rob_tag_t rob_head_tag;
     logic retire_valid;
     rob_tag_t retire_tag;
 
 
-    // ----- Frontend Side -----
+    // frontend side
     modport frontend(
         input clk_i,
               rst_ni,
@@ -53,7 +52,7 @@ interface frontend_backend_if(
     );
 
 
-    // ----- Backend Side -----
+    // backend side
     modport backend(
         input clk_i,
               rst_ni,
@@ -75,7 +74,7 @@ interface frontend_backend_if(
     );
 
 
-    // ----- Monitor Side - Observe Without Driving Signals -----
+    // monitor side, read signals only
     modport monitor(
         input clk_i,
               rst_ni,
@@ -97,7 +96,7 @@ interface frontend_backend_if(
 
 
 `ifdef ENABLE_PROTOCOL_ASSERTIONS
-    // ----- Check the Dispatch and Recovery Contract -----
+    // check dispatch counts and branch resolution
     always_ff @(posedge clk_i) if (rst_ni) begin
         assert (dispatch_count <= 2 && dispatch_accept_count <= dispatch_count);
         assert (!branch_mispredict || branch_resolve_valid);

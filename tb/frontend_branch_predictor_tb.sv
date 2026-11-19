@@ -1,4 +1,5 @@
 `timescale 1ns/1ps
+// test both lanes, predictor training, and BTB targets
 module frontend_branch_predictor_tb;
     logic clk = 0;
     always #5 clk = !clk;
@@ -11,6 +12,7 @@ module frontend_branch_predictor_tb;
     logic [31:0] resolve_pc, target;
     logic outcome, saved_local, saved_global, saved_local_taken, saved_global_taken;
 
+    // use small tables so we can make two PCs land in the same BTB slot
     frontend_branch_predictor #(
         .LOCAL_PC_BITS(1), .LOCAL_HISTORY_BITS(1), .GLOBAL_HISTORY_BITS(1),
         .CHOOSER_BITS(1), .BTB_BITS(1)
@@ -25,6 +27,7 @@ module frontend_branch_predictor_tb;
         .resolve_local_taken_i(saved_local_taken), .resolve_global_taken_i(saved_global_taken)
     );
 
+    // resolve one branch with the info saved when it was predicted
     task automatic train(
         input logic [31:0] branch_pc, branch_target,
         input logic actual_taken, old_local, old_global, old_local_taken, old_global_taken
@@ -37,14 +40,14 @@ module frontend_branch_predictor_tb;
         saved_global = old_global;
         saved_local_taken = old_local_taken;
         saved_global_taken = old_global_taken;
-        resolve_valid = 1;
-        @(posedge clk);
+        resolve_valid = 1; // tell the predictor a branch finished
+        @(posedge clk); // give the predictor one edge to update
         #1;
         resolve_valid = 0;
     endtask
 
     initial begin
-        pc = {32'h4, 32'h0};
+        pc = {32'h4, 32'h0}; // look up two neighboring instructions
         @(negedge clk);
         rst_n = 1;
         #1;
@@ -61,7 +64,7 @@ module frontend_branch_predictor_tb;
         if (taken !== 2'b01 || next_pc[0] !== 'h44)
             $fatal(1, "Taken prediction must use the updated BTB target");
 
-        // Train an older lookup's indices while the current lookup uses index 1.
+        // train the old index while the current lookup uses index 1
         repeat (4) train(0, 'h44, 1, 0, 0, 0, 0);
         if (dut.local_counter_q[0] !== 2'b11 || dut.global_counter_q[0] !== 2'b11 ||
             dut.local_counter_q[1] !== 2'b10 || dut.global_counter_q[1] !== 2'b10)
@@ -70,7 +73,7 @@ module frontend_branch_predictor_tb;
         if (dut.local_counter_q[1] !== 2'b00 || dut.global_counter_q[1] !== 2'b00)
             $fatal(1, "Counters must saturate at zero");
 
-        // Arrange a taken local prediction and a not-taken global prediction.
+        // set up local to predict taken and global to predict not taken
         repeat (3) train(0, 'h44, 1, 1, 0, 0, 0);
         train(4, '0, 0, 0, 0, 0, 0);
         train(4, '0, 0, 1, 0, 0, 0);

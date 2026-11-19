@@ -1,4 +1,5 @@
 `timescale 1ns/1ps
+// test ROM reads, stalls, redirects, and fetch errors
 module frontend_fetch_tb;
     logic clk = 0;
     always #5 clk = !clk;
@@ -14,11 +15,12 @@ module frontend_fetch_tb;
         .fetch_valid1_o(v1), .fetch_pc1_o(pc1), .fetch_inst1_o(inst1),
         .fetch_error0_o(e0), .fetch_error1_o(e1)
     );
-    // Synchronous ROM; address-valued words expose response/PC mismatches.
+    // return the addresses as data so we can check them against the PCs
     always @(posedge clk) if (imem.read_enable) begin
         imem.data <= {imem.address + 32'd4, imem.address};
         imem.error <= (imem.address == 32'h40) ? 2'b10 : 2'b00;
     end
+    // wait for the clock edge and let the new values settle
     task automatic tick;
         @(posedge clk);
         #1;
@@ -40,8 +42,9 @@ module frontend_fetch_tb;
             if (imem.read_enable) $fatal(1, "Overwrite during stall");
         end
         @(negedge clk); ready = 1;
-        tick(); check_bundle(8);
+        tick(); check_bundle(8); // check that fetch advances once ready is high
         tick(); check_bundle(16);
+        // redirect during a stall to address 4, the second word of a pair
         @(negedge clk); ready = 0; redirect = 1; target = 4;
         #1;
         if (v0 || v1 || imem.read_enable) $fatal(1, "Redirect not masked");
@@ -55,7 +58,7 @@ module frontend_fetch_tb;
         tick();
         @(negedge clk); redirect = 0;
         tick(); check_bundle(32'h40);
-        if (e0 !== 0 || e1 !== 1) $fatal(1, "Errors lost");
+        if (e0 !== 0 || e1 !== 1) $fatal(1, "Errors lost"); // the ROM marked only the second word
         @(negedge clk); rst_n = 0;
         tick();
         if (v0 || v1) $fatal(1, "Reset retained response");
