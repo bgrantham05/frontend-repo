@@ -28,7 +28,9 @@ module frontend_ready_buffer (
             if (count_q != 0) output_lane0_o = slots_q[0]; // send the oldest first
             if (count_q >= 2) output_lane1_o = slots_q[1]; // send the next one if present
         end
+    end
 
+    always_comb begin
         // remove only the oldest instructions the next stage accepted
         pop_count = int'(output_accept_count_i);
         if (pop_count > int'(output_count_o)) pop_count = int'(output_count_o);

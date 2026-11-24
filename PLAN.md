@@ -325,8 +325,15 @@ and interfaces remain unchanged by this step.
 - Coordinate exceptions: current completion structures have no explicit fault fields.
 
 ## 8. Integrate and validate
-- Add frontend top level exposing provided ROM and backend modports.
-- Connect fetch, buffer, dual decode, predictor, rename, dispatch, ROB, and recovery.
+- `common/frontend.sv` connects the ROM, sequential fetch, buffer, dual decode,
+  rename, and dispatch. Instantiate one `frontend_backend_if` for the frontend
+  and backend and one `backend_memory_if` for dispatch, backend issue, and LSU.
+  Backend supplies `dispatch_capacity` independently of the final
+  `dispatch_accept_count`, then enqueues that accepted prefix.
+- Connect the external ROB to the frontend allocation bundle, count, and old
+  destination outputs, and return admission, tail, head, retire, and reclaim.
+  Route completion and branch results from the backend interface to the ROB.
+- Predictor wiring and speculative rename recovery remain to be integrated.
 - Mock backend: partial acceptance, out-of-order completion, and branch resolution.
 - Check retirement order and mappings against a reference model; stress resource
   exhaustion, long stalls, ROB wraparound, and recovery.

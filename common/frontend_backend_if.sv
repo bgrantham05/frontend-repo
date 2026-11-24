@@ -13,6 +13,7 @@ interface frontend_backend_if(
 
     // accept 1 for the older instruction only, 2 for both
     lane_count_t dispatch_count, dispatch_accept_count;
+    lane_count_t dispatch_capacity; // backend capacity before LSU admission
     renamed_bundle_t dispatch_bundle; // instructions offered to the backend
 
     // two completion lanes, each can also carry a register writeback
@@ -34,7 +35,7 @@ interface frontend_backend_if(
     modport frontend(
         input clk_i,
               rst_ni,
-              dispatch_accept_count,
+              dispatch_capacity,
               completion_valid_0,
               completion_valid_1,
               completion_0,
@@ -45,6 +46,7 @@ interface frontend_backend_if(
               branch_result_pc,
 
         output dispatch_count,
+               dispatch_accept_count,
                dispatch_bundle,
                rob_head_tag,
                retire_valid,
@@ -57,12 +59,13 @@ interface frontend_backend_if(
         input clk_i,
               rst_ni,
               dispatch_count,
+              dispatch_accept_count,
               dispatch_bundle,
               rob_head_tag,
               retire_valid,
               retire_tag,
 
-        output dispatch_accept_count,
+        output dispatch_capacity,
                completion_valid_0,
                completion_valid_1,
                completion_0,
@@ -79,6 +82,7 @@ interface frontend_backend_if(
         input clk_i,
               rst_ni,
               dispatch_count,
+              dispatch_capacity,
               dispatch_accept_count,
               dispatch_bundle,
               completion_valid_0,
@@ -99,6 +103,7 @@ interface frontend_backend_if(
     // check dispatch counts and branch resolution
     always_ff @(posedge clk_i) if (rst_ni) begin
         assert (dispatch_count <= 2 && dispatch_accept_count <= dispatch_count);
+        assert (dispatch_capacity <= 2 && dispatch_accept_count <= dispatch_capacity);
         assert (!branch_mispredict || branch_resolve_valid);
         if (branch_resolve_valid)
             assert (dispatch_accept_count == 0);
